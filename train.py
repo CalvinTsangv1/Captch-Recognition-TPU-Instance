@@ -25,13 +25,13 @@ def read_and_decode(filename):
 def load_dataset():
     # Load training set.
     with tf.compat.v1.name_scope('input_train'):
-        image_train, label_train = read_and_decode("/Users/holeass/Documents/GitHub/Captcha-Recognition/level3/tfrecord/image_train.tfrecord")
+        image_train, label_train = read_and_decode("./tfrecord/image_train.tfrecord")
         image_batch_train, label_batch_train = tf.compat.v1.train.shuffle_batch(
             [image_train, label_train], batch_size=256, capacity=12800, min_after_dequeue=5120
         )
     # Load validation set.
     with tf.compat.v1.name_scope('input_valid'):
-        image_valid, label_valid = read_and_decode("/Users/holeass/Documents/GitHub/Captcha-Recognition/level3/tfrecord/image_valid.tfrecord")
+        image_valid, label_valid = read_and_decode("./tfrecord/image_valid.tfrecord")
         image_batch_valid, label_batch_valid = tf.compat.v1.train.shuffle_batch(
             [image_valid, label_valid], batch_size=512, capacity=12800, min_after_dequeue=5120
         )
@@ -42,10 +42,12 @@ def train():
     # Network
     model = Model()
     sess = tf.compat.v1.Session()
+    cluster_resolver = tf.distribute.cluster_resolver.TPUClusterResolver(tpu='local')
+    strategy = tf.distribute.TPUStrategy(cluster_resolver)
 
     # Recording training process.
-    writer_train = tf.compat.v1.summary.FileWriter('/Users/holeass/Documents/GitHub/Captcha-Recognition/level3/logs/train/', sess.graph)
-    writer_valid = tf.compat.v1.summary.FileWriter('/Users/holeass/Documents/GitHub/Captcha-Recognition/level3/logs/valid/', sess.graph)
+    writer_train = tf.compat.v1.summary.FileWriter('./logs/train/', sess.graph)
+    writer_valid = tf.compat.v1.summary.FileWriter('./logs/valid/', sess.graph)
 
     # Load training set and validation set.
     image_batch_train, label_batch_train, image_batch_valid, label_batch_valid = load_dataset()
@@ -55,7 +57,7 @@ def train():
     saver = tf.compat.v1.train.Saver(tf.compat.v1.trainable_variables())
     coord = tf.compat.v1.train.Coordinator()
     threads = tf.compat.v1.train.start_queue_runners(sess=sess, coord=coord)
-    sess.run(tf.compat.v1.global_variables_initializer())
+    strategy.run(tf.compat.v1.global_variables_initializer())
     saver.restore(sess, conf.MODEL_PATH)
     saver = tf.compat.v1.train.Saver(tf.compat.v1.trainable_variables(), max_to_keep=40)
 
@@ -63,26 +65,26 @@ def train():
     acc_max = 0
     while 1:
         # Get a batch of training set.
-        batch_x_train, batch_y_train = sess.run([image_batch_train, label_batch_train])
+        batch_x_train, batch_y_train = strategy.run([image_batch_train, label_batch_train])
 
         # train
-        _, loss_value = sess.run([model.optimizer, model.loss], feed_dict={model.X: batch_x_train,
+        _, loss_value = strategy.run([model.optimizer, model.loss], feed_dict={model.X: batch_x_train,
                                                                            model.Y: batch_y_train,
                                                                            model.keep_prob: 0.9})
         print("step "+str(i)+",loss "+str(loss_value))
 
         if i%10==0:
             # Calculate the accuracy of training set.
-            acc_train, summary = sess.run([model.accuracy, model.merged], feed_dict={model.X: batch_x_train,
+            acc_train, summary = strategy.run([model.accuracy, model.merged], feed_dict={model.X: batch_x_train,
                                                                                      model.Y: batch_y_train,
                                                                                      model.keep_prob: 1.0})
             writer_train.add_summary(summary, i)
 
             # Get a batch of validation set.
-            batch_x_valid, batch_y_valid = sess.run([image_batch_valid, label_batch_valid])
+            batch_x_valid, batch_y_valid = strategy.run([image_batch_valid, label_batch_valid])
 
             # Calculate the accuracy of validation set.
-            acc_valid, summary = sess.run([model.accuracy, model.merged], feed_dict={model.X: batch_x_valid,
+            acc_valid, summary = strategy.run([model.accuracy, model.merged], feed_dict={model.X: batch_x_valid,
                                                                                      model.Y: batch_y_valid,
                                                                                      model.keep_prob: 1.0})
             writer_valid.add_summary(summary, i)
@@ -91,7 +93,7 @@ def train():
 
         if i%100==0:
             print("Save the model Successfully")
-            saver.save(sess, "/Users/holeass/Documents/GitHub/Captcha-Recognition/level3/model/model_level3.ckpt", global_step=i)
+            saver.save(strategy, "./model/model_level3.ckpt", global_step=i)
 
         i += 1
 
